@@ -8,6 +8,7 @@ import type {
   MappedLED3D,
   ProjectData,
   WLEDController,
+  WLEDDiagnostics,
 } from './types'
 import { playEasterEgg, playLedPing, playLevelSnap, playScanComplete } from './utils/sound'
 
@@ -44,6 +45,7 @@ const SPARK_VECTORS = [
 export default function App() {
   const [drawer, setDrawer] = useState<DrawerMode>('effects')
   const [showPip, setShowPip] = useState(true)
+  const [autoPausePip, setAutoPausePip] = useState(true)
   const [cmdOpen, setCmdOpen] = useState(false)
   const [cmdQuery, setCmdQuery] = useState('')
   const [qrOpen, setQrOpen] = useState(false)
@@ -51,6 +53,10 @@ export default function App() {
   const [installUrls, setInstallUrls] = useState<Array<{ label: string; ip: string; url: string }>>([])
 
   const [controllers, setControllers] = useState<WLEDController[]>([])
+  const [wledDiags, setWledDiags] = useState<Record<string, WLEDDiagnostics>>({})
+  const [diagLoading, setDiagLoading] = useState(false)
+  const [optimizingId, setOptimizingId] = useState<string | null>(null)
+  const [uploading2dId, setUploading2dId] = useState<string | null>(null)
   const [cameras, setCameras] = useState<CameraNode[]>([])
   const [project, setProject] = useState<ProjectData | null>(null)
   const [effects, setEffects] = useState<EffectMeta[]>([])
@@ -364,6 +370,84 @@ export default function App() {
     loadInstallUrls()
   }, [loadInstallUrls])
 
+  const loadWledDiagnostics = useCallback(async () => {
+    setDiagLoading(true)
+    try {
+      const r = await fetch('/api/controllers/diagnostics')
+      if (r.ok) {
+        const data = await r.json()
+        const map: Record<string, WLEDDiagnostics> = {}
+        for (const d of data.diagnostics || []) {
+          map[d.id] = d
+        }
+        setWledDiags(map)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setDiagLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (drawer === 'controllers') {
+      loadWledDiagnostics()
+    }
+  }, [drawer, loadWledDiagnostics])
+
+  useEffect(() => {
+    loadWledDiagnostics()
+  }, [loadWledDiagnostics])
+
+  const handleOptimizeOne = useCallback(async (c: WLEDController) => {
+    setOptimizingId(c.id)
+    try {
+      const res = await apiPost(`/api/controllers/${encodeURIComponent(c.id)}/optimize`)
+      if (res.diagnostics) {
+        setWledDiags((prev) => ({ ...prev, [c.id]: res.diagnostics }))
+      }
+      playLevelSnap(sfxRef.current)
+      notify('celebrate', `Optimized ${c.name} for low-latency DDP.`)
+    } finally {
+      setOptimizingId(null)
+    }
+  }, [apiPost, notify])
+
+  const handleOptimizeAll = useCallback(async () => {
+    setOptimizingId('__all__')
+    try {
+      const res = await apiPost('/api/controllers/optimize-all')
+      const map: Record<string, WLEDDiagnostics> = {}
+      for (const d of res.diagnostics || []) {
+        map[d.id] = d
+      }
+      setWledDiags(map)
+      playLevelSnap(sfxRef.current)
+      notify(
+        'celebrate',
+        res.tuned_count > 0
+          ? `Optimized ${res.tuned_count} WLED controller${res.tuned_count === 1 ? '' : 's'} for low-latency DDP.`
+          : 'All reachable WLED controllers are already optimized.'
+      )
+    } finally {
+      setOptimizingId(null)
+    }
+  }, [apiPost, notify])
+
+  const handleUpload2dMap = useCallback(async (c: WLEDController) => {
+    setUploading2dId(c.id)
+    try {
+      const res = await apiPost(`/api/controllers/${encodeURIComponent(c.id)}/upload-ledmap2d`)
+      playLevelSnap(sfxRef.current)
+      notify(
+        'celebrate',
+        `Pushed ${res.width}×${res.height} 2D ledmap.json to ${c.name} (${res.mapped_count} LEDs). Live 3D DDP still takes over whenever Studio plays.`
+      )
+    } finally {
+      setUploading2dId(null)
+    }
+  }, [apiPost, notify])
+
   const openQrModal = useCallback(() => {
     setQrOpen(true)
     loadInstallUrls()
@@ -417,6 +501,20 @@ export default function App() {
   const coveragePct = map3d && map3d.total_leds > 0
     ? Math.round(((map3d.measured_count + map3d.interpolated_count) / map3d.total_leds) * 100)
     : 0
+  const mappedCountByCtrl = useMemo(() => {
+    const counts: Record<string, number> = {}
+    if (!map3d) return counts
+    for (const l of map3d.leds) {
+      if (l.source !== 'unmapped') {
+        counts[l.controller_id] = (counts[l.controller_id] || 0) + 1
+      }
+    }
+    return counts
+  }, [map3d])
+  const diagList = Object.values(wledDiags)
+  const needsTuneCount = diagList.filter((d) => d.reachable && !d.optimized).length
+  const optimizedCount = diagList.filter((d) => d.optimized).length
+  const pipPausedForFx = autoPausePip && Boolean(effState?.running)
 
   return (
     <div className="stage-root">
@@ -531,7 +629,7 @@ export default function App() {
       )}
 
       {/* COLLAPSIBLE BOTTOM-LEFT LIVE CAMERA PIP STRIP */}
-      {showPip && enabledCams.length > 0 && (
+      {showPip && enabledCams.length > 0 && !pipPausedForFx && (
         <div className="pip-tray">
           <div className="pip-header">
             <span>LIVE CAMERAS ({enabledCams.length})</span>
@@ -644,6 +742,37 @@ export default function App() {
                           await apiPost('/api/effects/update', { params })
                         }}
                       />
+                    </label>
+                    <label className="slider-row">
+                      <span>Target FPS</span>
+                      <strong>{Math.round(effState.fps)} FPS</strong>
+                      <input
+                        type="range"
+                        min={15}
+                        max={120}
+                        step={5}
+                        value={Math.round(effState.fps)}
+                        onChange={async (ev) => {
+                          const fps = parseFloat(ev.target.value)
+                          setEffState({ ...effState, fps })
+                          await apiPost('/api/effects/update', { fps })
+                        }}
+                      />
+                    </label>
+                    {effState.running && (
+                      <div className="perf-strip">
+                        <span>Live <strong>{effState.actual_fps ?? 0} FPS</strong></span>
+                        <span>Frame <strong>{effState.render_ms ?? 0}ms</strong></span>
+                        <span>Jitter <strong>±{effState.jitter_ms ?? 0}ms</strong></span>
+                      </div>
+                    )}
+                    <label className="check-row">
+                      <input
+                        type="checkbox"
+                        checked={autoPausePip}
+                        onChange={(e) => setAutoPausePip(e.target.checked)}
+                      />
+                      <span>Pause camera PIP during FX (cleaner Wi-Fi)</span>
                     </label>
                     {effState.effect_id === 'sweep_plane' && (
                       <label className="field-col">
@@ -917,9 +1046,29 @@ export default function App() {
             {drawer === 'controllers' && (
               <>
                 <div className="inline-btns">
-                  <button className="mini-btn" onClick={() => apiPost('/api/controllers/refresh').then(refreshAll)}>Refresh mDNS</button>
-                  <button className="mini-btn primary" onClick={() => apiPost('/api/controllers/select-all', { selected: true }).then(refreshAll)}>Select All WLEDs</button>
+                  <button className="mini-btn" onClick={() => apiPost('/api/controllers/refresh').then(refreshAll).then(loadWledDiagnostics)}>Refresh</button>
+                  <button className="mini-btn" disabled={diagLoading} onClick={loadWledDiagnostics}>
+                    {diagLoading ? 'Checking...' : 'Check Speed'}
+                  </button>
+                  <button className="mini-btn" onClick={() => apiPost('/api/controllers/select-all', { selected: true }).then(refreshAll)}>Select All</button>
                   <button className="mini-btn" onClick={() => apiPost('/api/controllers/select-all', { selected: false }).then(refreshAll)}>Clear</button>
+                </div>
+                <div className="wled-opt-bar">
+                  <div className="tiny">
+                    <strong>{optimizedCount}</strong> optimized ·{' '}
+                    <strong className={needsTuneCount > 0 ? 'warn-text' : ''}>{needsTuneCount}</strong> need tuning
+                  </div>
+                  <button
+                    className={`mini-btn ${needsTuneCount > 0 ? 'primary' : ''}`}
+                    disabled={optimizingId !== null || needsTuneCount === 0}
+                    onClick={handleOptimizeAll}
+                  >
+                    {optimizingId === '__all__'
+                      ? 'Optimizing...'
+                      : needsTuneCount > 0
+                        ? `Optimize All (${needsTuneCount})`
+                        : 'All Optimized'}
+                  </button>
                 </div>
                 <div className="inline-add">
                   <input placeholder="Add WLED IP (e.g. 192.168.1.50)" value={newWledIp} onChange={(e) => setNewWledIp(e.target.value)} />
@@ -930,6 +1079,7 @@ export default function App() {
                       await apiPost('/api/controllers/add', { ip: newWledIp })
                       setNewWledIp('')
                       await refreshAll()
+                      await loadWledDiagnostics()
                     }}
                   >
                     Add
@@ -942,27 +1092,74 @@ export default function App() {
                       <span>Make sure your ESP32s are on the same network, or paste a controller IP above to add it manually.</span>
                     </div>
                   ) : (
-                    controllers.map((c) => (
-                      <div key={c.id} className="item-card">
-                        <label className="check-row">
-                          <input
-                            type="checkbox"
-                            checked={c.selected}
-                            onChange={async (e) => {
-                              await apiPost(`/api/controllers/${encodeURIComponent(c.id)}/select`, { selected: e.target.checked })
-                              await refreshAll()
-                            }}
-                          />
-                          <div>
-                            <strong>{c.name}</strong>
-                            <div className="muted tiny">{c.ip} · {c.led_count} LEDs · v{c.version}</div>
+                    controllers.map((c) => {
+                      const diag = wledDiags[c.id]
+                      const mappedCnt = mappedCountByCtrl[c.id] || 0
+                      return (
+                        <div key={c.id} className="wled-card">
+                          <div className="wled-card-top">
+                            <label className="check-row">
+                              <input
+                                type="checkbox"
+                                checked={c.selected}
+                                onChange={async (e) => {
+                                  await apiPost(`/api/controllers/${encodeURIComponent(c.id)}/select`, { selected: e.target.checked })
+                                  await refreshAll()
+                                }}
+                              />
+                              <div>
+                                <strong>{c.name}</strong>
+                                <div className="muted tiny">{c.ip} · {c.led_count} LEDs · v{c.version}</div>
+                              </div>
+                            </label>
+                            {diag ? (
+                              diag.optimized ? (
+                                <span className="tag measured">Optimized</span>
+                              ) : diag.reachable ? (
+                                <span className="tag warn">Needs Tune</span>
+                              ) : (
+                                <span className="tag offline">Offline</span>
+                              )
+                            ) : null}
                           </div>
-                        </label>
-                        <button className="mini-btn" onClick={() => apiPost(`/api/controllers/${encodeURIComponent(c.id)}/identify`)}>
-                          Blink
-                        </button>
-                      </div>
-                    ))
+                          {diag?.reachable && (
+                            <div className="wled-diag-meta">
+                              <span>{diag.live_fps ?? 0} FPS live</span>
+                              <span>~{diag.hw_max_fps} FPS max</span>
+                              <span>{diag.rssi} dBm</span>
+                              {diag.fps_cap ? <span>cap {diag.fps_cap}</span> : <span>uncapped</span>}
+                            </div>
+                          )}
+                          {diag && !diag.optimized && diag.issues.length > 0 && (
+                            <div className="diag-issues">{diag.issues.join(' · ')}</div>
+                          )}
+                          <div className="inline-btns">
+                            <button className="mini-btn" onClick={() => apiPost(`/api/controllers/${encodeURIComponent(c.id)}/identify`)}>
+                              Blink
+                            </button>
+                            {diag?.reachable && !diag.optimized && (
+                              <button
+                                className="mini-btn primary"
+                                disabled={optimizingId !== null}
+                                onClick={() => handleOptimizeOne(c)}
+                              >
+                                {optimizingId === c.id ? 'Tuning...' : 'Optimize'}
+                              </button>
+                            )}
+                            {mappedCnt >= 2 && (
+                              <button
+                                className="mini-btn"
+                                disabled={uploading2dId !== null}
+                                title="Uploads a non-locking 2D ledmap.json to this ESP32 for native onboard WLED 2D effects when Studio isn't streaming."
+                                onClick={() => handleUpload2dMap(c)}
+                              >
+                                {uploading2dId === c.id ? 'Pushing...' : 'Push 2D Map'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
                   )}
                 </div>
               </>

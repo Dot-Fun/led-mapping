@@ -119,9 +119,10 @@ Once `X-Studio-Host` populates `studioHostUrl`, the bottom bar drives the Studio
 - Reads `name`, `leds.count`, `ver`, `arch`, `mac` (controller ID = mDNS instance, else `wled-<mac[-6:]>` or `wled-<ip>`). Add unadvertised IPs via `POST /api/controllers/add`.
 - `build_led_table(selected_only=True)` assigns contiguous `global_id`s across selected online controllers sorted by lowercase name.
 
-### DDP v1 Packet Framing (`wled/ddp.py`)
+### DDP v1 Packet Framing & Low-Latency Streaming (`wled/ddp.py`, `wled/optimize.py`)
 
-- **Transport:** Non-blocking UDP to port `:4048` (`DDP_PORT`).
+- **Transport:** Non-blocking UDP to port `:4048` (`DDP_PORT`), configured with `SO_SNDBUF = 262144` and `IP_TOS = 0xA0` (DSCP CS5 / WMM Video-Voice priority over best-effort Wi-Fi traffic).
+- **Zero-alloc scatter (`prepare_layout`):** Precomputes per-controller NumPy `(src_idx, dst_idx)` scatter arrays, reusable `(led_count, 3)` `uint8` buffers, and pre-built 10-byte DDP header `bytearray` packet slots once per scene; interleaves multi-packet chunks across controllers.
 - **MTU sizing:** `DDP_MAX_LEDS_PER_PACKET = 480` (`480 * 3 = 1440` RGB bytes + 10-byte header = 1450 bytes, fitting inside 1500-byte MTU without IP fragmentation).
 - **10-byte big-endian header (`!BBBB I H`):**
   - `flags` (`u8`): `0x40` (`DDP_VER1`) `|` (`0x01` `DDP_PUSH` **only on the last packet** of a controller's frame so WLED latches multi-packet frames atomically).
@@ -130,6 +131,10 @@ Once `X-Studio-Host` populates `studioHostUrl`, the bottom bar drives the Studio
   - `output_id` (`u8`): `1` (default display).
   - `offset` (`u32` BE): Byte offset into the controller's RGB array.
   - `length` (`u16` BE): Payload byte count (`<= 1440`).
+- **ESP32 Diagnostics, Tuning & Non-Locking 2D Fallback (`wled/optimize.py`):**
+  - `inspect_wled_controller()` reads `/json/info` + `/json/cfg`, computes physical 800 kHz WS2812B bus max FPS (`1_000_000 / (max_pin_leds * 30 + 300)`), and flags `wifi.sleep == true`, `0 < hw.led.fps < min(60, hw_max_fps)`, `if.live.en == false`, or `if.live.no-gc == false`.
+  - `optimize_wled_controller()` safely preserves GPIO pins and Wi-Fi credentials while patching `wifi.sleep = false`, `hw.led.fps = 0`, `if.live.en = true`, and `if.live.no-gc = true`.
+  - `build_wled_2d_ledmap()` + `upload_wled_2d_ledmap()` projects a controller's upright 3D `(x, y)` layout to a collision-free WLED `/ledmap.json` on LittleFS (`POST /upload`) for native onboard 2D effects when Studio isn't streaming (DDP still takes over automatically whenever Studio plays).
 
 ### Standalone Rust Runtime (`rust-engine/`, binary `ledmap-rt`)
 

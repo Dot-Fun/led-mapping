@@ -42,6 +42,11 @@ Server entry: `host/src/ledmap/api/server.py` (port `8780`, CORS `*`). Lifespan 
 | | `POST /api/controllers/{controller_id}/select` | `{selected}` — Toggle scan inclusion. |
 | | `POST /api/controllers/select-all` | `{selected}` — Bulk toggle all controllers. |
 | | `POST /api/controllers/{controller_id}/identify` | Stops effect engine; flashes white/cyan/white/black via DDP. |
+| | `GET /api/controllers/diagnostics` | Parallel live probe of all WLEDs returning `optimized`, `issues`, `hw_max_fps`, `live_fps`, `fps_cap`, `rssi`, `wifi_sleep`, `no_gc`. |
+| | `POST /api/controllers/{controller_id}/optimize` | Patches single ESP32 `/json/cfg` (`wifi.sleep=false`, `hw.led.fps=0`, `if.live.no-gc=true`) preserving pins & Wi-Fi. |
+| | `POST /api/controllers/optimize-all` | Optimizes every reachable WLED flagged `Needs Tune`. |
+| | `GET /api/controllers/{controller_id}/ledmap2d.json` | Generates upright 2D WLED `ledmap.json` projection from solved 3D map. |
+| | `POST /api/controllers/{controller_id}/upload-ledmap2d` | Uploads non-locking `/ledmap.json` to WLED flash via `/upload` for native 2D fallback when Studio is stopped. |
 | **Cameras & Cal** | `GET /api/cameras` | List local macOS + Android + manual camera nodes. |
 | | `POST /api/cameras/refresh` | Re-probe mDNS, UDP `:8089` beacons, and ADB devices. |
 | | `POST /api/cameras/add` | `{base_url}` — Register HTTP camera node (`transport="manual"`). |
@@ -67,7 +72,7 @@ Server entry: `host/src/ledmap/api/server.py` (port `8780`, CORS `*`). Lifespan 
 | | `GET /api/map/export` | Returns raw `Map3DResult` JSON. |
 | **Effects** | `GET /api/effects` | Returns `{effects, state}` (includes hot-loaded custom effects). |
 | | `POST /api/effects/start` | `{effect_id?, fps?, brightness?, params?}` — Syncs scene and starts DDP render loop. |
-| | `POST /api/effects/update` | Live-updates `effect_id`, `fps` (5–60), `brightness` (0.05–1.0), and merges `params`. |
+| | `POST /api/effects/update` | Live-updates `effect_id`, `fps` (5–120), `brightness` (0.05–1.0), and merges `params` via thread-safe `update_live()`. |
 | | `POST /api/effects/stop?blackout=false` | Stops loop; optionally blackouts WLEDs. |
 | | `POST /api/effects/toggle` | Starts or stops engine (`blackout=false`), returns `{running, summary_text}`. |
 | **Android APK / QR** | `GET /install` | Mobile HTML landing page with download button & setup steps. |
@@ -93,7 +98,7 @@ Clients connect to `/ws`; inbound client text is drained and ignored. Broadcast 
 
 Source: `host/src/ledmap/engine/effects.py`, `runner.py`.
 
-- **Render Loop (`EffectEngine`):** Async loop at `5–60 FPS` (default `40 FPS`, `brightness` `0.05–1.0`, default `0.75`). Evaluates mapped LEDs (`source in {"measured", "interpolated"}`), leaves unmapped LEDs `(0, 0, 0)`, streams via `DDPStreamer.send_global_frame()` (UDP `:4048`), and mirrors `live_rgb` over `/ws` at ~20 FPS. Falls back to a synthetic 1D X-axis line `[-1, 1]` if no 3D map is solved yet.
+- **Render Loop (`EffectEngine`):** Dedicated OS thread (`ddp-rt`) decoupled from FastAPI's `asyncio` loop, running at `5–120 FPS` (default `60 FPS`, `brightness` `0.05–1.0`, default `0.75`) with monotonic deadline pacing + sub-ms spin finish, mtime-cached custom effect loading, and live `actual_fps`/`render_ms`/`jitter_ms` telemetry. Evaluates mapped LEDs (`source in {"measured", "interpolated"}`), leaves unmapped LEDs `(0, 0, 0)`, streams via zero-alloc `DDPStreamer.send_global_frame()` (UDP `:4048`, WMM `IP_TOS=0xA0`), and drops the latest frame into a non-blocking slot mirrored over `/ws` at ~20 FPS by a separate asyncio task. Falls back to a synthetic 1D X-axis line `[-1, 1]` if no 3D map is solved yet.
 - **Coordinate Normalization:** Built-in shaders call `_normalize_bbox(xyz)` to map arbitrary 3D world coordinates isotropically into `[-1, 1]` (centered on bbox midpoint, scaled by `0.5 * max(hi - lo)`).
 
 ### Built-in Shaders (`BUILTIN_EFFECTS`)

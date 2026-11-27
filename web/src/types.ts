@@ -9,6 +9,27 @@ export interface WLEDController {
   selected: boolean
 }
 
+export interface WLEDDiagnostics {
+  id: string
+  name: string
+  ip: string
+  led_count: number
+  version: string
+  reachable: boolean
+  optimized: boolean
+  issues: string[]
+  live?: boolean
+  live_mode?: string
+  live_fps?: number
+  rssi?: number
+  signal?: number
+  max_pin_leds?: number
+  hw_max_fps?: number
+  fps_cap?: number
+  wifi_sleep?: boolean
+  no_gc?: boolean
+}
+
 export interface CameraNode {
   id: string
   name: string
@@ -123,4 +144,8 @@ export interface EffectState {
   fps: number
   brightness: number
   params: Record<string, unknown>
+  actual_fps?: number
+  render_ms?: number
+  jitter_ms?: number
+  frames_sent?: number
 }

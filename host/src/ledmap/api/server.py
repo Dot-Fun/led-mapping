@@ -29,6 +29,12 @@ from ledmap.models import LEDDescriptor, ProjectData
 from ledmap.storage import ProjectStore
 from ledmap.wled.ddp import DDPStreamer
 from ledmap.wled.discovery import WLEDRegistry
+from ledmap.wled.optimize import (
+    build_wled_2d_ledmap,
+    inspect_wled_controller,
+    optimize_wled_controller,
+    upload_wled_2d_ledmap,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PROJECTS_DIR = REPO_ROOT / "projects"
@@ -192,6 +198,87 @@ async def identify_controller(controller_id: str):
         state.ddp.fill_solid([c], *col)
         await asyncio.sleep(0.18)
     return {"ok": True}
+
+
+@app.get("/api/controllers/diagnostics")
+async def controllers_diagnostics():
+    ctrls = state.wled.list_controllers()
+    diags = await asyncio.gather(
+        *(inspect_wled_controller(c, state._proxy_client) for c in ctrls)
+    )
+    opt_count = sum(1 for d in diags if d.get("optimized"))
+    need_count = sum(1 for d in diags if d.get("reachable") and not d.get("optimized"))
+    return {
+        "diagnostics": list(diags),
+        "optimized_count": opt_count,
+        "needs_tune_count": need_count,
+    }
+
+
+@app.post("/api/controllers/optimize-all")
+async def optimize_all_controllers():
+    ctrls = state.wled.list_controllers()
+    diags = await asyncio.gather(
+        *(inspect_wled_controller(c, state._proxy_client) for c in ctrls)
+    )
+    to_tune = [
+        c for c, d in zip(ctrls, diags) if d.get("reachable") and not d.get("optimized")
+    ]
+    tuned = 0
+    errors: list[str] = []
+    for c in to_tune:
+        try:
+            await optimize_wled_controller(c, state._proxy_client)
+            tuned += 1
+        except Exception as exc:
+            errors.append(f"{c.name}: {exc}")
+    updated = await asyncio.gather(
+        *(inspect_wled_controller(c, state._proxy_client) for c in ctrls)
+    )
+    return {
+        "ok": len(errors) == 0,
+        "tuned_count": tuned,
+        "errors": errors,
+        "diagnostics": list(updated),
+        "optimized_count": sum(1 for d in updated if d.get("optimized")),
+        "needs_tune_count": sum(1 for d in updated if d.get("reachable") and not d.get("optimized")),
+    }
+
+
+@app.post("/api/controllers/{controller_id}/optimize")
+async def optimize_one_controller(controller_id: str):
+    c = state.wled.controllers.get(controller_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Controller not found")
+    try:
+        return await optimize_wled_controller(c, state._proxy_client)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to optimize {c.name}: {exc}")
+
+
+@app.get("/api/controllers/{controller_id}/ledmap2d.json")
+async def download_controller_ledmap_2d(controller_id: str, max_dim: int = 40):
+    try:
+        return build_wled_2d_ledmap(state.project, controller_id, max_dim=max_dim)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/controllers/{controller_id}/upload-ledmap2d")
+async def upload_controller_ledmap_2d(controller_id: str, max_dim: int = 40):
+    c = state.wled.controllers.get(controller_id) or next(
+        (pc for pc in state.project.controllers if pc.id == controller_id), None
+    )
+    if not c:
+        raise HTTPException(status_code=404, detail="Controller not found")
+    try:
+        ledmap = build_wled_2d_ledmap(state.project, controller_id, max_dim=max_dim)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        return await upload_wled_2d_ledmap(c, ledmap, state._proxy_client)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to upload ledmap.json to {c.name}: {exc}")
 
 
 # ── Unlimited Camera Fleet ──────────────────────────────────────────────────
@@ -653,14 +740,12 @@ async def start_effect(req: EffectStartRequest):
 
 @app.post("/api/effects/update")
 async def update_effect(req: EffectStartRequest):
-    if req.effect_id is not None:
-        state.engine.effect_id = req.effect_id
-    if req.fps is not None:
-        state.engine.fps = max(5.0, min(60.0, float(req.fps)))
-    if req.brightness is not None:
-        state.engine.brightness = max(0.05, min(1.0, float(req.brightness)))
-    if req.params is not None:
-        state.engine.params.update(req.params)
+    state.engine.update_live(
+        effect_id=req.effect_id,
+        fps=req.fps,
+        brightness=req.brightness,
+        params=req.params,
+    )
     return {"state": state.engine.state_dict()}
 
 

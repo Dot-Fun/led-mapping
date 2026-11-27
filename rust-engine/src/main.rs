@@ -48,6 +48,12 @@ struct ProjectFile {
     map_3d: Option<Map3D>,
 }
 
+struct PreparedController {
+    addr: String,
+    rgb_buf: Vec<u8>,
+    packets: Vec<(usize, usize, Vec<u8>)>,
+}
+
 fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [u8; 3] {
     let h = h.rem_euclid(1.0);
     let i = (h * 6.0).floor() as i32;
@@ -98,7 +104,6 @@ fn eval_effect(effect: &str, p: [f32; 3], t: f32, speed: f32) -> [u8; 3] {
             (((p[2] + 1.0) * 0.5).clamp(0.0, 1.0) * 255.0) as u8,
         ],
         _ => {
-            // sweep_plane along Y
             let pos = (t * speed * std::f32::consts::PI).sin();
             let d = (p[1] - pos).abs() / 0.22;
             let val = (-d * d).exp();
@@ -107,28 +112,41 @@ fn eval_effect(effect: &str, p: [f32; 3], t: f32, speed: f32) -> [u8; 3] {
     }
 }
 
-fn send_ddp_controller(sock: &UdpSocket, ip: &str, rgb_bytes: &[u8], seq: u8) {
+fn prepare_controllers(controllers: &[Controller]) -> (Vec<PreparedController>, HashMap<String, usize>) {
     let max_bytes = DDP_MAX_LEDS_PER_PACKET * 3;
-    let total = rgb_bytes.len();
-    let mut offset = 0usize;
-    let mut packet = Vec::with_capacity(10 + max_bytes);
-    let addr = format!("{ip}:{DDP_PORT}");
-    while offset < total {
-        let end = (offset + max_bytes).min(total);
-        let chunk = &rgb_bytes[offset..end];
-        let is_last = end >= total;
-        let flags = DDP_VER1 | if is_last { DDP_PUSH } else { 0 };
-        packet.clear();
-        packet.push(flags);
-        packet.push(seq);
-        packet.push(DDP_TYPE_RGB);
-        packet.push(1);
-        packet.extend_from_slice(&(offset as u32).to_be_bytes());
-        packet.extend_from_slice(&(chunk.len() as u16).to_be_bytes());
-        packet.extend_from_slice(chunk);
-        let _ = sock.send_to(&packet, &addr);
-        offset = end;
+    let mut prepared = Vec::new();
+    let mut id_to_slot = HashMap::new();
+
+    for c in controllers {
+        if !c.online || c.led_count == 0 {
+            continue;
+        }
+        let total = c.led_count * 3;
+        let mut packets = Vec::new();
+        let mut offset = 0usize;
+        while offset < total {
+            let chunk_len = max_bytes.min(total - offset);
+            let is_last = offset + chunk_len >= total;
+            let flags = DDP_VER1 | if is_last { DDP_PUSH } else { 0 };
+            let mut pkt = vec![0u8; 10 + chunk_len];
+            pkt[0] = flags;
+            pkt[1] = 1;
+            pkt[2] = DDP_TYPE_RGB;
+            pkt[3] = 1;
+            pkt[4..8].copy_from_slice(&(offset as u32).to_be_bytes());
+            pkt[8..10].copy_from_slice(&(chunk_len as u16).to_be_bytes());
+            packets.push((offset, chunk_len, pkt));
+            offset += chunk_len;
+        }
+        let slot = prepared.len();
+        id_to_slot.insert(c.id.clone(), slot);
+        prepared.push(PreparedController {
+            addr: format!("{}:{DDP_PORT}", c.ip),
+            rgb_buf: vec![0u8; total],
+            packets,
+        });
     }
+    (prepared, id_to_slot)
 }
 
 fn run_play(args: &[String]) {
@@ -140,6 +158,9 @@ fn run_play(args: &[String]) {
     let raw = fs::read_to_string(project_path).expect("Failed to read project.json");
     let proj: ProjectFile = serde_json::from_str(&raw).expect("Invalid project.json");
     let map = proj.map_3d.expect("Project has no solved map_3d yet");
+
+    let (mut prepared, id_to_slot) = prepare_controllers(&proj.controllers);
+    let max_chunks = prepared.iter().map(|p| p.packets.len()).max().unwrap_or(0);
 
     // Normalize bounding box to [-1, 1]
     let mapped: Vec<&MappedLed> = map.leds.iter().filter(|l| l.source != "unmapped").collect();
@@ -154,75 +175,90 @@ fn run_play(args: &[String]) {
     let center = [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5, (lo[2] + hi[2]) * 0.5];
     let span = ((hi[0] - lo[0]).max(hi[1] - lo[1]).max(hi[2] - lo[2])).max(1e-5) * 0.5;
 
-    let norm_pts: Vec<(usize, String, usize, [f32; 3])> = mapped
+    let norm_pts: Vec<(usize, usize, [f32; 3])> = mapped
         .iter()
-        .map(|l| {
-            (
-                l.global_id,
-                l.controller_id.clone(),
-                l.led_index,
+        .filter_map(|l| {
+            let slot = *id_to_slot.get(&l.controller_id)?;
+            Some((
+                slot,
+                l.led_index * 3,
                 [(l.x - center[0]) / span, (l.y - center[1]) / span, (l.z - center[2]) / span],
-            )
+            ))
         })
         .collect();
 
     let sock = UdpSocket::bind("0.0.0.0:0").expect("UDP bind failed");
-    let period = Duration::from_secs_f32(1.0 / fps.max(1.0));
+    let period = Duration::from_secs_f64(1.0 / (fps.max(1.0) as f64));
     let start = Instant::now();
+    let mut next_t = start;
     let mut seq: u8 = 1;
+    let mut colors: Vec<[u8; 3]> = vec![[0, 0, 0]; norm_pts.len()];
 
     println!(
-        "ledmap-rt streaming '{}' to {} controllers ({} mapped LEDs) @ {:.0} FPS...",
+        "ledmap-rt streaming '{}' to {} controllers ({} mapped LEDs) @ {:.0} FPS (zero-alloc deadline pacing)...",
         effect,
-        proj.controllers.len(),
+        prepared.len(),
         norm_pts.len(),
         fps
     );
 
     loop {
-        let frame_t0 = Instant::now();
         let t = start.elapsed().as_secs_f32();
 
-        let colors: Vec<[u8; 3]> = norm_pts
-            .par_iter()
-            .map(|(_, _, _, p)| {
+        colors
+            .par_iter_mut()
+            .zip(norm_pts.par_iter())
+            .for_each(|(out, (_, _, p))| {
                 let c = eval_effect(effect, *p, t, 0.9);
-                [
+                *out = [
                     (c[0] as f32 * brightness) as u8,
                     (c[1] as f32 * brightness) as u8,
                     (c[2] as f32 * brightness) as u8,
-                ]
-            })
-            .collect();
+                ];
+            });
 
-        let mut bufs: HashMap<&str, Vec<u8>> = proj
-            .controllers
-            .iter()
-            .filter(|c| c.online)
-            .map(|c| (c.id.as_str(), vec![0u8; c.led_count * 3]))
-            .collect();
-
-        for ((_, cid, idx, _), rgb) in norm_pts.iter().zip(colors.iter()) {
-            if let Some(buf) = bufs.get_mut(cid.as_str()) {
-                let o = idx * 3;
-                if o + 2 < buf.len() {
-                    buf[o] = rgb[0];
-                    buf[o + 1] = rgb[1];
-                    buf[o + 2] = rgb[2];
-                }
+        for pc in &mut prepared {
+            pc.rgb_buf.fill(0);
+        }
+        for ((slot, byte_off, _), rgb) in norm_pts.iter().zip(colors.iter()) {
+            let buf = &mut prepared[*slot].rgb_buf;
+            if *byte_off + 2 < buf.len() {
+                buf[*byte_off] = rgb[0];
+                buf[*byte_off + 1] = rgb[1];
+                buf[*byte_off + 2] = rgb[2];
             }
         }
 
-        for c in &proj.controllers {
-            if let Some(buf) = bufs.get(c.id.as_str()) {
-                send_ddp_controller(&sock, &c.ip, buf, seq);
+        for pc in &mut prepared {
+            for (offset, chunk_len, pkt) in &mut pc.packets {
+                pkt[1] = seq;
+                pkt[10..10 + *chunk_len].copy_from_slice(&pc.rgb_buf[*offset..*offset + *chunk_len]);
+            }
+        }
+
+        // Interleave chunks across controllers
+        for chunk_i in 0..max_chunks {
+            for pc in &prepared {
+                if let Some((_, _, pkt)) = pc.packets.get(chunk_i) {
+                    let _ = sock.send_to(pkt, &pc.addr);
+                }
             }
         }
         seq = (seq % 15) + 1;
 
-        let elapsed = frame_t0.elapsed();
-        if elapsed < period {
-            thread::sleep(period - elapsed);
+        // Monotonic deadline pacing with sub-millisecond spin finish
+        next_t += period;
+        let now = Instant::now();
+        if next_t + period < now {
+            next_t = now + period;
+        }
+        if let Some(rem) = next_t.checked_duration_since(now) {
+            if rem > Duration::from_micros(1500) {
+                thread::sleep(rem - Duration::from_micros(1000));
+            }
+            while Instant::now() < next_t {
+                std::hint::spin_loop();
+            }
         }
     }
 }
@@ -232,7 +268,6 @@ fn run_bench() {
     let n_frames = 10usize;
     let n_pixels = 50_000usize;
 
-    // Benchmark 1: Rayon parallel 3D effect evaluation for 2,000 LEDs
     let pts: Vec<[f32; 3]> = (0..n_leds)
         .map(|i| {
             let a = i as f32 * 0.1;
@@ -248,7 +283,6 @@ fn run_bench() {
     }
     let dt_eff = t0.elapsed();
 
-    // Benchmark 2: Rayon parallel Decode-First ternary correlation (50k active pixels x 2000 codewords)
     let code_mat: Vec<f32> = (0..n_leds * n_frames * 3)
         .map(|i| if i % 3 == 0 { 1.0 } else { -0.5 })
         .collect();
