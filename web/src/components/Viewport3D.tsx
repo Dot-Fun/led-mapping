@@ -34,9 +34,10 @@ function createLedSpriteTexture(): THREE.CanvasTexture {
   const cx = size / 2
   const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx)
   grad.addColorStop(0.0, 'rgba(255, 255, 255, 1.0)')
-  grad.addColorStop(0.58, 'rgba(255, 255, 255, 1.0)')
-  grad.addColorStop(0.72, 'rgba(255, 255, 255, 0.25)')
-  grad.addColorStop(0.84, 'rgba(255, 255, 255, 0.0)')
+  grad.addColorStop(0.45, 'rgba(255, 255, 255, 0.98)')
+  grad.addColorStop(0.66, 'rgba(255, 255, 255, 0.36)')
+  grad.addColorStop(0.88, 'rgba(255, 255, 255, 0.06)')
+  grad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)')
   ctx.fillStyle = grad
   ctx.fillRect(0, 0, size, size)
   const tex = new THREE.CanvasTexture(canvas)
@@ -212,12 +213,12 @@ export const Viewport3D: React.FC<Props> = ({
     geom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
 
     const mat = new THREE.PointsMaterial({
-      size: 0.075,
+      size: 0.088,
       map: spriteTexRef.current ?? undefined,
       vertexColors: true,
       sizeAttenuation: true,
       transparent: true,
-      alphaTest: 0.08,
+      alphaTest: 0.02,
       depthWrite: true,
     })
     const pts = new THREE.Points(geom, mat)
