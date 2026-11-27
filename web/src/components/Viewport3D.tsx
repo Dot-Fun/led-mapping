@@ -106,7 +106,7 @@ export const Viewport3D: React.FC<Props> = ({
     camGroupRef.current = camGroup
 
     // Pulsing vermilion selection halo around the active LED
-    const haloGeo = new THREE.RingGeometry(0.055, 0.085, 28)
+    const haloGeo = new THREE.RingGeometry(0.032, 0.048, 28)
     const haloMat = new THREE.MeshBasicMaterial({
       color: 0xff3c00,
       side: THREE.DoubleSide,
@@ -213,13 +213,13 @@ export const Viewport3D: React.FC<Props> = ({
     geom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
 
     const mat = new THREE.PointsMaterial({
-      size: 0.088,
+      size: 0.045,
       map: spriteTexRef.current ?? undefined,
       vertexColors: true,
       sizeAttenuation: true,
       transparent: true,
-      alphaTest: 0.02,
-      depthWrite: true,
+      alphaTest: 0.01,
+      depthWrite: false,
     })
     const pts = new THREE.Points(geom, mat)
     scene.add(pts)
@@ -230,10 +230,10 @@ export const Viewport3D: React.FC<Props> = ({
       for (const cam of map3d.cameras) {
         const origin = new THREE.Vector3(...cam.position)
         const dir = new THREE.Vector3(...cam.look_dir).normalize()
-        const arrow = new THREE.ArrowHelper(dir, origin, 0.36, 0xff3c00, 0.095, 0.06)
+        const arrow = new THREE.ArrowHelper(dir, origin, 0.32, 0xff3c00, 0.08, 0.05)
         camGroup.add(arrow)
         const dot = new THREE.Mesh(
-          new THREE.SphereGeometry(0.038, 14, 14),
+          new THREE.SphereGeometry(0.022, 14, 14),
           new THREE.MeshBasicMaterial({ color: 0xe9cf77 })
         )
         dot.position.copy(origin)

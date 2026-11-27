@@ -134,7 +134,7 @@ Source: `web/src/App.tsx`, `web/src/components/Viewport3D.tsx`, `web/src/styles.
 
 ### Full-Bleed Stage (`Viewport3D.tsx`)
 - Full-viewport Three.js scene on warm dotfun obsidian (`#0d0b0a`, `OrbitControls` with damping, warm `GridHelper` at `y=-1.2`, `AxesHelper`, `ResizeObserver`).
-- Mapped LEDs (`source !== 'unmapped'`) render as crisp circular `THREE.Points` bulbs with a tight subtle halo (`CanvasTexture`, `alphaTest: 0.02`, `depthWrite: true`, `size: 0.088`, vertex colors). Solved camera poses render as dotfun vermilion `#ff3c00` `ArrowHelper` + gold `#e9cf77` origin spheres when `showCameras` is enabled.
+- Mapped LEDs (`source !== 'unmapped'`) render as crisp circular `THREE.Points` bulbs with a tight subtle halo (`CanvasTexture`, normal blending, `depthWrite: false`, `size: 0.045`, vertex colors). Solved camera poses render as dotfun vermilion `#ff3c00` `ArrowHelper` + gold `#e9cf77` origin spheres when `showCameras` is enabled.
 - Clicking a point raycasts (`threshold: 0.08`), attaches a pulsing vermilion selection halo ring, opens the floating LED inspector card, plays a subtle muteable Web Audio ping (`web/src/utils/sound.ts`), and calls `POST /api/map/blink-led` (`duration_ms: 900`).
 - Color modes: `live` (WS `live_rgb` with warm ember floor `>= (0.14, 0.11, 0.09)`), `coverage` (green `measured`, gold `interpolated`), `controller` (9-color warm-forward controller palette). Selected LED highlights warm cream `#fffbed`.
 
