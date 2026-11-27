@@ -12,9 +12,37 @@ interface Props {
   colorMode: 'live' | 'coverage' | 'controller'
 }
 
+// Warm-forward high-contrast palette anchored on dotfun vermilion & gold
 const CTRL_PALETTE = [
-  0x38bdf8, 0xa78bfa, 0x34d399, 0xfbbf24, 0xf87171, 0xf472b6, 0x2dd4bf, 0xfb923c, 0x818cf8,
+  0xff3c00, // dotfun vermilion
+  0xe9cf77, // dotfun gold
+  0x34d399, // emerald
+  0xfb7185, // coral rose
+  0x38bdf8, // sky
+  0xf59e0b, // amber
+  0xa78bfa, // violet
+  0x2dd4bf, // teal
+  0xfffbed, // warm cream
 ]
+
+function createLedSpriteTexture(): THREE.CanvasTexture {
+  const size = 64
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const cx = size / 2
+  const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx)
+  grad.addColorStop(0.0, 'rgba(255, 255, 255, 1.0)')
+  grad.addColorStop(0.28, 'rgba(255, 255, 255, 0.92)')
+  grad.addColorStop(0.58, 'rgba(255, 255, 255, 0.32)')
+  grad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, size, size)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.needsUpdate = true
+  return tex
+}
 
 export const Viewport3D: React.FC<Props> = ({
   map3d,
@@ -27,17 +55,25 @@ export const Viewport3D: React.FC<Props> = ({
   const mountRef = useRef<HTMLDivElement | null>(null)
   const pointsRef = useRef<THREE.Points | null>(null)
   const camGroupRef = useRef<THREE.Group | null>(null)
+  const selectHaloRef = useRef<THREE.Mesh | null>(null)
   const visibleLedsRef = useRef<MappedLED3D[]>([])
   const sceneRef = useRef<THREE.Scene | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
+  const spriteTexRef = useRef<THREE.CanvasTexture | null>(null)
+  const selectedIdRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    selectedIdRef.current = selectedLedId
+  }, [selectedLedId])
 
   useEffect(() => {
     const el = mountRef.current
     if (!el) return
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0x070a10)
+    // Warm dotfun obsidian canvas (tinted toward #100f0f, never sterile blue-black)
+    scene.background = new THREE.Color(0x0d0b0a)
     sceneRef.current = scene
 
     const camera = new THREE.PerspectiveCamera(55, el.clientWidth / Math.max(1, el.clientHeight), 0.01, 200)
@@ -50,20 +86,37 @@ export const Viewport3D: React.FC<Props> = ({
     el.appendChild(renderer.domElement)
     rendererRef.current = renderer
 
+    const spriteTex = createLedSpriteTexture()
+    spriteTexRef.current = spriteTex
+
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
     controls.dampingFactor = 0.08
 
-    const grid = new THREE.GridHelper(6, 24, 0x1e293b, 0x111827)
+    const grid = new THREE.GridHelper(6, 24, 0x2f2621, 0x1a1513)
     grid.position.y = -1.2
     scene.add(grid)
 
-    const axes = new THREE.AxesHelper(0.6)
+    const axes = new THREE.AxesHelper(0.55)
     scene.add(axes)
 
     const camGroup = new THREE.Group()
     scene.add(camGroup)
     camGroupRef.current = camGroup
+
+    // Pulsing vermilion selection halo around the active LED
+    const haloGeo = new THREE.RingGeometry(0.055, 0.085, 28)
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: 0xff3c00,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.9,
+      depthTest: false,
+    })
+    const halo = new THREE.Mesh(haloGeo, haloMat)
+    halo.visible = false
+    scene.add(halo)
+    selectHaloRef.current = halo
 
     const raycaster = new THREE.Raycaster()
     raycaster.params.Points.threshold = 0.08
@@ -84,9 +137,16 @@ export const Viewport3D: React.FC<Props> = ({
     renderer.domElement.addEventListener('click', handleClick)
 
     let raf = 0
+    const clock = new THREE.Clock()
     const animate = () => {
       raf = requestAnimationFrame(animate)
       controls.update()
+      if (selectHaloRef.current && selectHaloRef.current.visible && cameraRef.current) {
+        const t = clock.getElapsedTime()
+        const pulse = 1.0 + 0.28 * Math.sin(t * 6.5)
+        selectHaloRef.current.scale.setScalar(pulse)
+        selectHaloRef.current.quaternion.copy(cameraRef.current.quaternion)
+      }
       renderer.render(scene, camera)
     }
     animate()
@@ -105,6 +165,9 @@ export const Viewport3D: React.FC<Props> = ({
       cancelAnimationFrame(raf)
       ro.disconnect()
       renderer.domElement.removeEventListener('click', handleClick)
+      spriteTex.dispose()
+      haloGeo.dispose()
+      haloMat.dispose()
       controls.dispose()
       renderer.dispose()
       el.removeChild(renderer.domElement)
@@ -139,9 +202,9 @@ export const Viewport3D: React.FC<Props> = ({
       positions[idx * 3] = led.x
       positions[idx * 3 + 1] = led.y
       positions[idx * 3 + 2] = led.z
-      colors[idx * 3] = 0.2
-      colors[idx * 3 + 1] = 0.85
-      colors[idx * 3 + 2] = 1.0
+      colors[idx * 3] = 1.0
+      colors[idx * 3 + 1] = 0.82
+      colors[idx * 3 + 2] = 0.45
     })
 
     const geom = new THREE.BufferGeometry()
@@ -149,24 +212,28 @@ export const Viewport3D: React.FC<Props> = ({
     geom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
 
     const mat = new THREE.PointsMaterial({
-      size: 0.07,
+      size: 0.135,
+      map: spriteTexRef.current ?? undefined,
       vertexColors: true,
       sizeAttenuation: true,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     })
     const pts = new THREE.Points(geom, mat)
     scene.add(pts)
     pointsRef.current = pts
 
-    // Draw solved camera frustums
+    // Draw solved camera frustums in dotfun vermilion + gold
     if (showCameras) {
       for (const cam of map3d.cameras) {
         const origin = new THREE.Vector3(...cam.position)
         const dir = new THREE.Vector3(...cam.look_dir).normalize()
-        const arrow = new THREE.ArrowHelper(dir, origin, 0.35, 0xf59e0b, 0.09, 0.06)
+        const arrow = new THREE.ArrowHelper(dir, origin, 0.36, 0xff3c00, 0.095, 0.06)
         camGroup.add(arrow)
         const dot = new THREE.Mesh(
-          new THREE.SphereGeometry(0.04, 12, 12),
-          new THREE.MeshBasicMaterial({ color: 0xf59e0b })
+          new THREE.SphereGeometry(0.038, 14, 14),
+          new THREE.MeshBasicMaterial({ color: 0xe9cf77 })
         )
         dot.position.copy(origin)
         camGroup.add(dot)
@@ -174,33 +241,43 @@ export const Viewport3D: React.FC<Props> = ({
     }
   }, [map3d, showCameras])
 
-  // Update LED colors smoothly on liveRgb or mode change
+  // Update LED colors smoothly on liveRgb or mode change + position selection halo
   useEffect(() => {
     const pts = pointsRef.current
-    if (!pts || !map3d) return
+    const halo = selectHaloRef.current
+    if (!pts || !map3d) {
+      if (halo) halo.visible = false
+      return
+    }
     const colAttr = pts.geometry.getAttribute('color') as THREE.BufferAttribute
     const mapped = visibleLedsRef.current
     const ctrlIndex = new Map<string, number>()
     let nextIdx = 0
     const tmpColor = new THREE.Color()
+    let foundSelected = false
 
     for (let i = 0; i < mapped.length; i++) {
       const led = mapped[i]
       if (selectedLedId === led.global_id) {
-        colAttr.setXYZ(i, 1, 1, 1)
+        colAttr.setXYZ(i, 1.0, 0.98, 0.93)
+        if (halo) {
+          halo.position.set(led.x, led.y, led.z)
+          halo.visible = true
+        }
+        foundSelected = true
         continue
       }
       if (colorMode === 'live' && liveRgb && led.global_id * 3 + 2 < liveRgb.length) {
         const r = liveRgb[led.global_id * 3] / 255
         const g = liveRgb[led.global_id * 3 + 1] / 255
         const b = liveRgb[led.global_id * 3 + 2] / 255
-        // Keep dark LEDs slightly visible as faint slate dots
-        colAttr.setXYZ(i, Math.max(r, 0.08), Math.max(g, 0.09), Math.max(b, 0.12))
+        // Keep unlit LEDs subtly visible as warm embers in the dark stage
+        colAttr.setXYZ(i, Math.max(r, 0.14), Math.max(g, 0.11), Math.max(b, 0.09))
       } else if (colorMode === 'coverage') {
         if (led.source === 'measured') {
-          colAttr.setXYZ(i, 0.15, 0.88, 0.45)
+          colAttr.setXYZ(i, 0.18, 0.9, 0.48)
         } else {
-          colAttr.setXYZ(i, 0.25, 0.55, 1.0)
+          colAttr.setXYZ(i, 0.91, 0.81, 0.47) // dotfun gold for interpolated
         }
       } else {
         if (!ctrlIndex.has(led.controller_id)) {
@@ -210,6 +287,9 @@ export const Viewport3D: React.FC<Props> = ({
         tmpColor.setHex(hex)
         colAttr.setXYZ(i, tmpColor.r, tmpColor.g, tmpColor.b)
       }
+    }
+    if (halo && !foundSelected) {
+      halo.visible = false
     }
     colAttr.needsUpdate = true
   }, [liveRgb, map3d, colorMode, selectedLedId])

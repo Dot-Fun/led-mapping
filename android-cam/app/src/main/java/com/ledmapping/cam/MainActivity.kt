@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.HapticFeedbackConstants
 import android.view.TextureView
 import android.view.WindowManager
 import android.widget.Button
@@ -82,14 +83,14 @@ class MainActivity : AppCompatActivity() {
         btnDim = findViewById(R.id.btnDim)
         btnUpdate = findViewById(R.id.btnUpdate)
 
-        btnScan.setOnClickListener { triggerRemoteScan() }
-        btnHeatmap.setOnClickListener { triggerRemoteAction("/api/map/paint-coverage", null, "Painted Accuracy Heatmap (Green/Yellow/Red)") }
-        btnUndo.setOnClickListener { triggerRemoteAction("/api/rounds/undo-last", null, "Undid last round") }
-        btnFx.setOnClickListener { triggerRemoteAction("/api/effects/toggle", null, "Toggled 3D FX") }
-        btnLedPreset.setOnClickListener { cameraController?.applyLedScanPreset() }
-        btnAuto.setOnClickListener { cameraController?.applyAutoPreset() }
-        btnDim.setOnClickListener { toggleDim() }
-        btnUpdate.setOnClickListener { downloadAndInstallUpdate() }
+        btnScan.setOnClickListener { it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); triggerRemoteScan() }
+        btnHeatmap.setOnClickListener { it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); triggerRemoteAction("/api/map/paint-coverage", null, "Painted Accuracy Heatmap (Green/Yellow/Red)") }
+        btnUndo.setOnClickListener { it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); triggerRemoteAction("/api/rounds/undo-last", null, "Undid last round") }
+        btnFx.setOnClickListener { it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); triggerRemoteAction("/api/effects/toggle", null, "Toggled 3D FX") }
+        btnLedPreset.setOnClickListener { it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); cameraController?.applyLedScanPreset() }
+        btnAuto.setOnClickListener { it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); cameraController?.applyAutoPreset() }
+        btnDim.setOnClickListener { it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); toggleDim() }
+        btnUpdate.setOnClickListener { it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); downloadAndInstallUpdate() }
 
         acquireLocks()
 

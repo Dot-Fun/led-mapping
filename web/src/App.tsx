@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DotfunLogo } from './components/DotfunLogo'
 import { Viewport3D } from './components/Viewport3D'
 import type {
   CameraNode,
@@ -8,6 +9,7 @@ import type {
   ProjectData,
   WLEDController,
 } from './types'
+import { playEasterEgg, playLedPing, playLevelSnap, playScanComplete } from './utils/sound'
 
 type DrawerMode = 'effects' | 'scan' | 'cameras' | 'controllers' | 'closed'
 
@@ -18,6 +20,26 @@ interface CmdItem {
   hint?: string
   action: () => void | Promise<void>
 }
+
+const DOTFUN_MOTTOS = [
+  'Run Good · Look Good · Feel Good.',
+  'No Smoke, No Mirrors. Just real 3D coordinates.',
+  'Fluff Free, Fun Forward. Now go light up the woods.',
+  'Human first. Photons second.',
+]
+
+const SPARK_VECTORS = [
+  { sx: '-44px', sy: '-32px', color: '#ff3c00' },
+  { sx: '-24px', sy: '-46px', color: '#e9cf77' },
+  { sx: '0px', sy: '-52px', color: '#fffbed' },
+  { sx: '26px', sy: '-44px', color: '#ff3c00' },
+  { sx: '46px', sy: '-28px', color: '#e9cf77' },
+  { sx: '48px', sy: '14px', color: '#ff3c00' },
+  { sx: '26px', sy: '38px', color: '#e9cf77' },
+  { sx: '-18px', sy: '40px', color: '#fffbed' },
+  { sx: '-46px', sy: '16px', color: '#ff3c00' },
+  { sx: '-36px', sy: '-10px', color: '#e9cf77' },
+]
 
 export default function App() {
   const [drawer, setDrawer] = useState<DrawerMode>('effects')
@@ -52,13 +74,59 @@ export default function App() {
   const [newCamUrl, setNewCamUrl] = useState('')
   const [rotEuler, setRotEuler] = useState<[number, number, number]>([0, 0, 0])
   const [scaleM, setScaleM] = useState(1.0)
-  const [toast, setToast] = useState<{ kind: 'info' | 'error'; text: string } | null>(null)
+  const [toast, setToast] = useState<{ kind: 'info' | 'error' | 'celebrate'; text: string } | null>(null)
+  const [sparkKey, setSparkKey] = useState<number>(0)
+  const [brandSparkKey, setBrandSparkKey] = useState<number>(0)
+  const [sfxEnabled, setSfxEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('dotfun_ledmap_sfx') !== 'off'
+    } catch {
+      return true
+    }
+  })
 
   const cmdInputRef = useRef<HTMLInputElement | null>(null)
+  const brandClicksRef = useRef<number>(0)
+  const mottoIdxRef = useRef<number>(0)
+  const sfxRef = useRef<boolean>(sfxEnabled)
 
-  const notify = useCallback((kind: 'info' | 'error', text: string) => {
+  useEffect(() => {
+    sfxRef.current = sfxEnabled
+    try {
+      localStorage.setItem('dotfun_ledmap_sfx', sfxEnabled ? 'on' : 'off')
+    } catch {
+      // ignore
+    }
+  }, [sfxEnabled])
+
+  // DevTools console easter egg for curious builders
+  useEffect(() => {
+    console.log(
+      '%c dotfun %c 3D LED Mapping Studio — Run Good · Look Good · Feel Good · https://www.dotfun.co',
+      'background:#ff3c00;color:#fffbed;font-weight:800;padding:3px 7px;border-radius:4px;',
+      'color:#e9cf77;font-weight:600;padding:3px 4px;'
+    )
+  }, [])
+
+  const notify = useCallback((kind: 'info' | 'error' | 'celebrate', text: string) => {
     setToast({ kind, text })
   }, [])
+
+  const triggerCoverageSpark = useCallback(() => {
+    setSparkKey((k) => k + 1)
+  }, [])
+
+  const handleBrandClick = useCallback(() => {
+    brandClicksRef.current += 1
+    if (brandClicksRef.current >= 5) {
+      brandClicksRef.current = 0
+      const motto = DOTFUN_MOTTOS[mottoIdxRef.current % DOTFUN_MOTTOS.length]
+      mottoIdxRef.current += 1
+      setBrandSparkKey((k) => k + 1)
+      playEasterEgg(sfxRef.current)
+      notify('celebrate', `dotfun — ${motto}`)
+    }
+  }, [notify])
 
   const refreshAll = useCallback(async () => {
     try {
@@ -79,7 +147,7 @@ export default function App() {
         setRotEuler(pRes.project.map_3d.rotation_euler_deg || [0, 0, 0])
       }
     } catch (e) {
-      notify('error', `Backend offline: ${String(e)}`)
+      notify('error', `Studio host offline: ${String(e)}`)
     }
   }, [notify])
 
@@ -105,10 +173,12 @@ export default function App() {
           setScanMsg(`${msg.message} (${msg.step}/${msg.total})`)
           setScanPct(Math.round((msg.step / Math.max(1, msg.total)) * 100))
         } else if (msg.type === 'scan_complete') {
-          setScanMsg(`Round ${msg.round_id} solved!`)
+          setScanMsg(`Round ${msg.round_id} stitched`)
           setScanPct(100)
           setScanning(false)
-          notify('info', `Scan ${msg.round_id} completed & stitched into 3D map`)
+          playScanComplete(sfxRef.current)
+          triggerCoverageSpark()
+          notify('celebrate', `Round ${msg.round_id} stitched into the 3D map.`)
           refreshAll()
         } else if (msg.type === 'cal_progress') {
           setScanMsg(msg.message)
@@ -118,7 +188,7 @@ export default function App() {
       }
     }
     return () => ws.close()
-  }, [notify, refreshAll])
+  }, [notify, refreshAll, triggerCoverageSpark])
 
   const apiPost = useCallback(
     async (url: string, body?: unknown) => {
@@ -141,7 +211,7 @@ export default function App() {
     if (scanning) return
     setScanning(true)
     setScanPct(4)
-    setScanMsg('Starting multi-camera ternary ECC scan...')
+    setScanMsg('Flashing GF(3) ternary codebook across the fleet...')
     try {
       await apiPost('/api/scan/start', {
         mode: scanMode,
@@ -171,10 +241,10 @@ export default function App() {
   const handlePaintUnmapped = useCallback(async () => {
     await apiPost('/api/map/paint-coverage')
     setColorMode('coverage')
-    notify('info', 'Accuracy Heatmap: GREEN=solid (<3px), YELLOW=needs better angle, RED=unmapped')
+    notify('info', 'Accuracy heatmap live—green is locked (<3px), yellow needs another angle, red is unseen.')
   }, [apiPost, notify])
 
-  // Hands-Free Walk-Around Refine Loop: move a phone around -> auto-scans every N seconds & paints heatmap!
+  // Hands-Free Walk-Around Refine Loop: move a phone around -> auto-scans every N seconds & paints heatmap
   useEffect(() => {
     if (!walkAround) {
       setWalkCountdown(0)
@@ -202,12 +272,14 @@ export default function App() {
 
   const handleLockAllCams = useCallback(async () => {
     await apiPost('/api/cameras/lock-all')
-    notify('info', 'Locked exposure, white balance & focus across enabled cameras')
+    playLevelSnap(sfxRef.current)
+    notify('info', 'Locked exposure, white balance, and focus across active cameras.')
     await refreshAll()
   }, [apiPost, notify, refreshAll])
 
   const handleSelectLed = useCallback(async (led: MappedLED3D) => {
     setSelectedLed(led)
+    playLedPing(sfxRef.current)
     try {
       await fetch('/api/map/blink-led', {
         method: 'POST',
@@ -219,7 +291,7 @@ export default function App() {
     }
   }, [])
 
-  // Global keyboard shortcuts (field-friendly zero-mouse workflow!)
+  // Global keyboard shortcuts (field-friendly zero-mouse workflow)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -231,6 +303,10 @@ export default function App() {
       }
       if (e.key === 'Escape' && cmdOpen) {
         setCmdOpen(false)
+        return
+      }
+      if (e.key === 'Escape' && qrOpen) {
+        setQrOpen(false)
         return
       }
       const tag = (e.target as HTMLElement)?.tagName
@@ -256,7 +332,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [cmdOpen, handleLockAllCams, handlePaintUnmapped, handleStartScan, togglePlay])
+  }, [cmdOpen, handleLockAllCams, handlePaintUnmapped, handleStartScan, qrOpen, togglePlay])
 
   const loadInstallUrls = useCallback(async () => {
     setQrLoading(true)
@@ -266,7 +342,6 @@ export default function App() {
       const data = await r.json()
       setInstallUrls(data.urls || [])
     } catch {
-      // Retry once after 600ms in case backend was restarting
       setTimeout(async () => {
         try {
           const r2 = await fetch('/api/install-urls')
@@ -298,10 +373,11 @@ export default function App() {
     const base: CmdItem[] = [
       { id: 'qr', group: 'Fleet', label: 'Add Android Phone (Show Install QR Code)', action: openQrModal },
       { id: 'scan', group: 'Field Actions', label: 'Run Multi-Camera Scan Round', hint: 'S', action: handleStartScan },
-      { id: 'paint', group: 'Field Actions', label: 'Paint Unmapped Physical LEDs (Red / Amber / Green)', hint: 'P', action: handlePaintUnmapped },
+      { id: 'paint', group: 'Field Actions', label: 'Paint Unmapped Physical LEDs (Green / Yellow / Red)', hint: 'P', action: handlePaintUnmapped },
       { id: 'lock', group: 'Field Actions', label: 'Lock All Camera Exposures for LEDs', hint: 'L', action: handleLockAllCams },
       { id: 'play', group: 'Playback', label: effState?.running ? 'Stop DDP 3D Stream' : 'Start DDP 3D Stream', hint: 'Space', action: togglePlay },
       { id: 'pip', group: 'View', label: showPip ? 'Hide Live Camera PIP Tray' : 'Show Live Camera PIP Tray', action: () => setShowPip((v) => !v) },
+      { id: 'sfx', group: 'View', label: sfxEnabled ? 'Mute Tactile Sound Cues' : 'Enable Tactile Sound Cues', action: () => setSfxEnabled((v) => !v) },
       { id: 'refresh', group: 'Fleet', label: 'Refresh WLED & Camera Fleet (mDNS / UDP / ADB)', action: async () => { await apiPost('/api/controllers/refresh'); await apiPost('/api/cameras/refresh'); await refreshAll() } },
     ]
     for (const e of effects) {
@@ -326,7 +402,7 @@ export default function App() {
       })
     }
     return base
-  }, [apiPost, controllers, effState?.running, effects, handleLockAllCams, handlePaintUnmapped, handleStartScan, refreshAll, showPip, togglePlay])
+  }, [apiPost, controllers, effState?.running, effects, handleLockAllCams, handlePaintUnmapped, handleStartScan, openQrModal, refreshAll, sfxEnabled, showPip, togglePlay])
 
   const filteredCmds = useMemo(() => {
     const q = cmdQuery.trim().toLowerCase()
@@ -358,13 +434,34 @@ export default function App() {
 
       {/* TOP BENTO TELEMETRY HUD */}
       <header className="hud-top">
-        <div className="hud-brand">
-          <span className={`status-orb ${effState?.running ? 'live' : ''}`} />
-          <div>
-            <div className="brand-title">LEDMAP 3D</div>
-            <div className="brand-sub">{project?.name || 'default'} · {project?.rounds.length ?? 0} rounds</div>
+        <button
+          className="hud-brand"
+          onClick={handleBrandClick}
+          title="dotfun 3D LED Mapping Studio"
+        >
+          <span className="brand-logo-wrap">
+            <DotfunLogo height={20} />
+          </span>
+          <span className="brand-divider" />
+          <div className="brand-meta">
+            <div className="brand-title">
+              <span className={`status-orb ${effState?.running ? 'live' : ''}`} />
+              <span>LEDMAP 3D</span>
+            </div>
+            <div className="brand-sub">{project?.name || 'default'} · {project?.rounds.length ?? 0} round{(project?.rounds.length ?? 0) === 1 ? '' : 's'}</div>
           </div>
-        </div>
+          {brandSparkKey > 0 && (
+            <span key={brandSparkKey} className="spark-layer" aria-hidden="true">
+              {SPARK_VECTORS.map((v, i) => (
+                <span
+                  key={i}
+                  className="spark-dot"
+                  style={{ '--sx': v.sx, '--sy': v.sy, background: v.color } as React.CSSProperties}
+                />
+              ))}
+            </span>
+          )}
+        </button>
 
         <div className="bento-strip">
           <button className="kpi-chip" onClick={() => setDrawer(drawer === 'controllers' ? 'closed' : 'controllers')}>
@@ -379,6 +476,17 @@ export default function App() {
             <span className="kpi-label">3D COVERAGE</span>
             <span className="kpi-val accent">{coveragePct}% <small>{map3d ? `${map3d.measured_count}/${map3d.total_leds}` : 'unscanned'}</small></span>
             <span className="mini-bar"><span style={{ width: `${coveragePct}%` }} /></span>
+            {sparkKey > 0 && (
+              <span key={sparkKey} className="spark-layer" aria-hidden="true">
+                {SPARK_VECTORS.map((v, i) => (
+                  <span
+                    key={i}
+                    className="spark-dot"
+                    style={{ '--sx': v.sx, '--sy': v.sy, background: v.color } as React.CSSProperties}
+                  />
+                ))}
+              </span>
+            )}
           </button>
           <div className="kpi-chip static">
             <span className="kpi-label">PRECISION</span>
@@ -386,15 +494,25 @@ export default function App() {
           </div>
         </div>
 
-        <button className="cmd-trigger" onClick={() => { setCmdOpen(true); setCmdQuery(''); setTimeout(() => cmdInputRef.current?.focus(), 20) }}>
-          <span>Command</span>
-          <kbd>⌘K</kbd>
-        </button>
+        <div className="hud-right-tools">
+          <button
+            className={`sfx-btn ${sfxEnabled ? '' : 'muted-sfx'}`}
+            onClick={() => setSfxEnabled((v) => !v)}
+            title={sfxEnabled ? 'Mute sound cues' : 'Unmute sound cues'}
+            aria-label={sfxEnabled ? 'Mute sound cues' : 'Unmute sound cues'}
+          >
+            {sfxEnabled ? '♪' : '✕'}
+          </button>
+          <button className="cmd-trigger" onClick={() => { setCmdOpen(true); setCmdQuery(''); setTimeout(() => cmdInputRef.current?.focus(), 20) }}>
+            <span>Command</span>
+            <kbd>⌘K</kbd>
+          </button>
+        </div>
       </header>
 
       {/* TOAST / SCAN PROGRESS PILL */}
       {(scanning || toast) && (
-        <div className={`hud-toast ${toast?.kind === 'error' ? 'error' : ''}`}>
+        <div className={`hud-toast ${toast?.kind === 'error' ? 'error' : toast?.kind === 'celebrate' ? 'celebrate' : ''}`}>
           {scanning ? (
             <div className="scan-progress">
               <div className="scan-progress-row">
@@ -406,7 +524,7 @@ export default function App() {
           ) : (
             <>
               <span>{toast?.text}</span>
-              <button className="icon-btn" onClick={() => setToast(null)}>✕</button>
+              <button className="icon-btn" onClick={() => setToast(null)} aria-label="Dismiss">✕</button>
             </>
           )}
         </div>
@@ -441,7 +559,7 @@ export default function App() {
         <div className="led-inspector">
           <div className="inspector-head">
             <strong>LED #{selectedLed.global_id}</strong>
-            <button className="icon-btn" onClick={() => setSelectedLed(null)}>✕</button>
+            <button className="icon-btn" onClick={() => setSelectedLed(null)} aria-label="Close inspector">✕</button>
           </div>
           <div className="inspector-meta">
             <span>{selectedLed.controller_name} · idx {selectedLed.led_index}</span>
@@ -452,7 +570,7 @@ export default function App() {
           </div>
           <div className="inspector-foot">
             <span>{selectedLed.views_count} views · {selectedLed.reproj_error_px}px err</span>
-            <button className="mini-btn" onClick={() => handleSelectLed(selectedLed)}>Blink Again</button>
+            <button className="mini-btn primary" onClick={() => handleSelectLed(selectedLed)}>Blink LED</button>
           </div>
         </div>
       )}
@@ -473,7 +591,7 @@ export default function App() {
           <div className="drawer-body">
             {drawer === 'effects' && (
               <>
-                <div className="section-label">SPATIAL SHADERS (UDP DDP :4048)</div>
+                <div className="section-label">Spatial Shaders (UDP DDP :4048)</div>
                 <div className="effect-grid">
                   {effects.map((e) => (
                     <button
@@ -493,7 +611,7 @@ export default function App() {
 
                 {effState && (
                   <div className="card-block">
-                    <div className="section-label">LIVE PARAMETERS</div>
+                    <div className="section-label">Live Parameters</div>
                     <label className="slider-row">
                       <span>Brightness</span>
                       <strong>{Math.round(effState.brightness * 100)}%</strong>
@@ -549,7 +667,7 @@ export default function App() {
                 )}
 
                 <div className="card-block">
-                  <div className="section-label">3D VIEWPORT & ALIGNMENT</div>
+                  <div className="section-label">3D Viewport & Alignment</div>
                   <div className="seg-group">
                     {(['live', 'coverage', 'controller'] as const).map((m) => (
                       <button key={m} className={colorMode === m ? 'active' : ''} onClick={() => setColorMode(m)}>
@@ -588,11 +706,12 @@ export default function App() {
                       onClick={async () => {
                         const res = await apiPost('/api/map/auto-level')
                         if (res.rotation_euler_deg) setRotEuler(res.rotation_euler_deg)
-                        notify('info', `Auto-leveled vertical wall (${res.rotation_euler_deg?.join('°, ')}°)`)
+                        playLevelSnap(sfxRef.current)
+                        notify('info', `Auto-leveled upright (${res.rotation_euler_deg?.join('°, ')}°).`)
                         await refreshAll()
                       }}
                     >
-                      📐 Auto-Level Vertical
+                      Auto-Level Vertical
                     </button>
                     <button
                       className="mini-btn"
@@ -602,7 +721,8 @@ export default function App() {
                           scale_meters_per_unit: scaleM,
                           rotation_euler_deg: rotEuler,
                         })
-                        notify('info', 'Updated 3D alignment')
+                        playLevelSnap(sfxRef.current)
+                        notify('info', 'Updated 3D alignment.')
                         await refreshAll()
                       }}
                     >
@@ -616,7 +736,7 @@ export default function App() {
             {drawer === 'scan' && (
               <>
                 <div className="card-block">
-                  <div className="section-label">ULTRA-FAST TERNARY ECC SCANNER</div>
+                  <div className="section-label">Ternary ECC Optical Scanner</div>
                   <label className="field-col">
                     <span>Targeting Strategy</span>
                     <select value={scanMode} onChange={(e) => setScanMode(e.target.value as typeof scanMode)}>
@@ -636,14 +756,14 @@ export default function App() {
                     <input type="range" min={60} max={300} step={10} value={settleMs} onChange={(e) => setSettleMs(parseInt(e.target.value, 10))} />
                   </label>
                   <button className="primary full-btn" disabled={scanning} onClick={handleStartScan}>
-                    {scanning ? 'Scanning...' : `Add Angle — Round ${(project?.rounds.length ?? 0) + 1} (${enabledCams.length} Cams)`}
+                    {scanning ? 'Scanning Fleet...' : `Capture Round ${(project?.rounds.length ?? 0) + 1} (${enabledCams.length} Cams)`}
                   </button>
                   <div className="inline-btns">
                     <button
                       className={`mini-btn ${walkAround ? 'primary' : ''}`}
                       onClick={() => setWalkAround((v) => !v)}
                     >
-                      {walkAround ? `⏹ Stop Walk-Around (${walkCountdown}s)` : `🚶 Walk-Around Refine (${walkIntervalSec}s)`}
+                      {walkAround ? `Stop Walk-Around (${walkCountdown}s)` : `Walk-Around Loop (${walkIntervalSec}s)`}
                     </button>
                     {project && project.rounds.length > 0 && (
                       <button
@@ -651,11 +771,11 @@ export default function App() {
                         onClick={async () => {
                           const last = project.rounds[project.rounds.length - 1]
                           await fetch(`/api/rounds/${last.round_id}`, { method: 'DELETE' })
-                          notify('info', `Removed ${last.label} and re-solved 3D map`)
+                          notify('info', `Removed ${last.label} and re-solved the 3D map.`)
                           await refreshAll()
                         }}
                       >
-                        ↩ Undo Last Round
+                        Undo Last
                       </button>
                     )}
                   </div>
@@ -668,43 +788,50 @@ export default function App() {
 
                 {map3d && map3d.components.length > 1 && (
                   <div className="warn-box">
-                    <strong>{map3d.components.length} Disjoint Zones Detected:</strong> Capture 1 bridge round seeing ≥6 LEDs from both zones to stitch them automatically.
+                    <strong>{map3d.components.length} separate 3D zones:</strong> Capture one bridging round that sees at least 8 LEDs from both zones to stitch them together.
                   </div>
                 )}
 
-                <div className="section-label">MULTI-ROUND STEPPER ({project?.rounds.length ?? 0})</div>
+                <div className="section-label">Captured Rounds ({project?.rounds.length ?? 0})</div>
                 <div className="stack-list">
-                  {(project?.rounds || []).map((r) => (
-                    <div key={r.round_id} className="item-card">
-                      <div>
-                        <strong>{r.label}</strong> <small className="muted">({r.mode} · {r.duration_sec}s)</small>
-                        <div className="muted tiny">
-                          {r.views.map((v) => `${v.camera_name}: ${Object.keys(v.detections).length}`).join(' · ')}
+                  {(!project || project.rounds.length === 0) ? (
+                    <div className="empty-state">
+                      <strong>No rounds captured yet</strong>
+                      <span>Point at least two cameras at your lights from different angles, lock exposure, and press <kbd>S</kbd>.</span>
+                    </div>
+                  ) : (
+                    project.rounds.map((r) => (
+                      <div key={r.round_id} className="item-card">
+                        <div>
+                          <strong>{r.label}</strong> <small className="muted">({r.mode} · {r.duration_sec}s)</small>
+                          <div className="muted tiny">
+                            {r.views.map((v) => `${v.camera_name}: ${Object.keys(v.detections).length}`).join(' · ')}
+                          </div>
+                        </div>
+                        <div className="inline-btns">
+                          <button
+                            className="mini-btn"
+                            onClick={async () => {
+                              await apiPost(`/api/rounds/${r.round_id}/toggle`, { enabled: !r.enabled })
+                              await apiPost('/api/map/solve', { interpolate_occluded: true })
+                              await refreshAll()
+                            }}
+                          >
+                            {r.enabled ? 'On' : 'Off'}
+                          </button>
+                          <button
+                            className="mini-btn"
+                            onClick={async () => {
+                              await fetch(`/api/rounds/${r.round_id}`, { method: 'DELETE' })
+                              await refreshAll()
+                            }}
+                          >
+                            ✕
+                          </button>
                         </div>
                       </div>
-                      <div className="inline-btns">
-                        <button
-                          className="mini-btn"
-                          onClick={async () => {
-                            await apiPost(`/api/rounds/${r.round_id}/toggle`, { enabled: !r.enabled })
-                            await apiPost('/api/map/solve', { interpolate_occluded: true })
-                            await refreshAll()
-                          }}
-                        >
-                          {r.enabled ? 'On' : 'Off'}
-                        </button>
-                        <button
-                          className="mini-btn"
-                          onClick={async () => {
-                            await fetch(`/api/rounds/${r.round_id}`, { method: 'DELETE' })
-                            await refreshAll()
-                          }}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
                 <a className="btn-link full-btn" href="/api/map/export" download="ledmap_3d.json">
                   Export 3D Map JSON
@@ -718,7 +845,7 @@ export default function App() {
                   <button className="mini-btn" onClick={() => apiPost('/api/cameras/refresh').then(refreshAll)}>Refresh Fleet</button>
                   <button className="mini-btn primary" onClick={handleLockAllCams}>Lock All AE</button>
                   <a className="mini-btn" href="/api/calibration/charuco.png" target="_blank" rel="noreferrer">ChArUco</a>
-                  <button className="mini-btn primary" onClick={openQrModal}>📱 Add Phone QR</button>
+                  <button className="mini-btn primary" onClick={openQrModal}>Add Phone QR</button>
                 </div>
                 <div className="inline-add">
                   <input placeholder="http://<phone-or-mac>:8788" value={newCamUrl} onChange={(e) => setNewCamUrl(e.target.value)} />
@@ -735,46 +862,54 @@ export default function App() {
                   </button>
                 </div>
                 <div className="stack-list">
-                  {cameras.map((cam) => (
-                    <div key={cam.id} className={`cam-drawer-card ${cam.enabled ? '' : 'dim'}`}>
-                      <div className="cam-row-top">
-                        <div>
-                          <strong>{cam.name}</strong>
-                          <div className="muted tiny">
-                            {cam.platform.toUpperCase()} · {cam.transport} · {cam.width}×{cam.height}
-                            {cam.battery >= 0 ? ` · ${cam.battery}%` : ''}
-                          </div>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={cam.enabled}
-                          onChange={async (e) => {
-                            await apiPost(`/api/cameras/${encodeURIComponent(cam.id)}/enable`, { enabled: e.target.checked })
-                            await refreshAll()
-                          }}
-                        />
-                      </div>
-                      {cam.config_locked_by_other_app && (
-                        <div className="warn-chip">Locked by EMEET STUDIO (capture works; quit app for AE lock)</div>
-                      )}
-                      <img className="drawer-preview" src={`/api/cameras/${encodeURIComponent(cam.id)}/preview`} alt={cam.name} />
-                      <div className="inline-btns">
-                        <button className="mini-btn" onClick={() => apiPost(`/api/cameras/${encodeURIComponent(cam.id)}/config`, { led_preset: true, ae_lock: true, awb_lock: true, af_lock: true })}>LED Lock</button>
-                        <button className="mini-btn" onClick={() => apiPost(`/api/cameras/${encodeURIComponent(cam.id)}/config`, { auto_preset: true, ae_lock: false, awb_lock: false, af_lock: false })}>Auto</button>
-                        <button
-                          className="mini-btn"
-                          onClick={async () => {
-                            notify('info', `Hold ChArUco board in front of ${cam.name}...`)
-                            const res = await apiPost(`/api/cameras/${encodeURIComponent(cam.id)}/calibrate`, { num_frames: 8, delay_ms: 850 })
-                            notify('info', `Calibrated ${cam.name}: RMS ${res.rms_px}px`)
-                            await refreshAll()
-                          }}
-                        >
-                          Calibrate
-                        </button>
-                      </div>
+                  {cameras.length === 0 ? (
+                    <div className="empty-state">
+                      <strong>No cameras on deck yet</strong>
+                      <span>Click <b>Add Phone QR</b> to drop an Android phone straight into the fleet over Wi-Fi, or paste a remote Mac URL above.</span>
                     </div>
-                  ))}
+                  ) : (
+                    cameras.map((cam) => (
+                      <div key={cam.id} className={`cam-drawer-card ${cam.enabled ? '' : 'dim'}`}>
+                        <div className="cam-row-top">
+                          <div>
+                            <strong>{cam.name}</strong>
+                            <div className="muted tiny">
+                              {cam.platform.toUpperCase()} · {cam.transport} · {cam.width}×{cam.height}
+                              {cam.battery >= 0 ? ` · ${cam.battery}%` : ''}
+                            </div>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={cam.enabled}
+                            onChange={async (e) => {
+                              await apiPost(`/api/cameras/${encodeURIComponent(cam.id)}/enable`, { enabled: e.target.checked })
+                              await refreshAll()
+                            }}
+                          />
+                        </div>
+                        {cam.config_locked_by_other_app && (
+                          <div className="warn-chip">Locked by EMEET STUDIO—capture works; quit that app to lock exposure.</div>
+                        )}
+                        <img className="drawer-preview" src={`/api/cameras/${encodeURIComponent(cam.id)}/preview`} alt={cam.name} />
+                        <div className="inline-btns">
+                          <button className="mini-btn" onClick={() => apiPost(`/api/cameras/${encodeURIComponent(cam.id)}/config`, { led_preset: true, ae_lock: true, awb_lock: true, af_lock: true })}>LED Lock</button>
+                          <button className="mini-btn" onClick={() => apiPost(`/api/cameras/${encodeURIComponent(cam.id)}/config`, { auto_preset: true, ae_lock: false, awb_lock: false, af_lock: false })}>Auto</button>
+                          <button
+                            className="mini-btn"
+                            onClick={async () => {
+                              notify('info', `Hold the ChArUco board in front of ${cam.name}...`)
+                              const res = await apiPost(`/api/cameras/${encodeURIComponent(cam.id)}/calibrate`, { num_frames: 8, delay_ms: 850 })
+                              playLevelSnap(sfxRef.current)
+                              notify('celebrate', `Calibrated ${cam.name}—RMS ${res.rms_px}px.`)
+                              await refreshAll()
+                            }}
+                          >
+                            Calibrate
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </>
             )}
@@ -801,30 +936,42 @@ export default function App() {
                   </button>
                 </div>
                 <div className="stack-list">
-                  {controllers.map((c) => (
-                    <div key={c.id} className="item-card">
-                      <label className="check-row">
-                        <input
-                          type="checkbox"
-                          checked={c.selected}
-                          onChange={async (e) => {
-                            await apiPost(`/api/controllers/${encodeURIComponent(c.id)}/select`, { selected: e.target.checked })
-                            await refreshAll()
-                          }}
-                        />
-                        <div>
-                          <strong>{c.name}</strong>
-                          <div className="muted tiny">{c.ip} · {c.led_count} LEDs · v{c.version}</div>
-                        </div>
-                      </label>
-                      <button className="mini-btn" onClick={() => apiPost(`/api/controllers/${encodeURIComponent(c.id)}/identify`)}>
-                        Blink
-                      </button>
+                  {controllers.length === 0 ? (
+                    <div className="empty-state">
+                      <strong>No WLED controllers found yet</strong>
+                      <span>Make sure your ESP32s are on the same network, or paste a controller IP above to add it manually.</span>
                     </div>
-                  ))}
+                  ) : (
+                    controllers.map((c) => (
+                      <div key={c.id} className="item-card">
+                        <label className="check-row">
+                          <input
+                            type="checkbox"
+                            checked={c.selected}
+                            onChange={async (e) => {
+                              await apiPost(`/api/controllers/${encodeURIComponent(c.id)}/select`, { selected: e.target.checked })
+                              await refreshAll()
+                            }}
+                          />
+                          <div>
+                            <strong>{c.name}</strong>
+                            <div className="muted tiny">{c.ip} · {c.led_count} LEDs · v{c.version}</div>
+                          </div>
+                        </label>
+                        <button className="mini-btn" onClick={() => apiPost(`/api/controllers/${encodeURIComponent(c.id)}/identify`)}>
+                          Blink
+                        </button>
+                      </div>
+                    ))
+                  )}
                 </div>
               </>
             )}
+          </div>
+
+          <div className="drawer-footer-note">
+            <span>Run Good · Look Good · Feel Good</span>
+            <a href="https://www.dotfun.co" target="_blank" rel="noreferrer">dotfun.co</a>
           </div>
         </aside>
       )}
@@ -836,25 +983,25 @@ export default function App() {
           <kbd>Space</kbd>
         </button>
         <button className="dock-btn primary" disabled={scanning} onClick={handleStartScan} title="S">
-          <span>{scanning ? 'Scanning...' : '⚡ Scan Round'}</span>
+          <span>{scanning ? 'Scanning...' : 'Scan Round'}</span>
           <kbd>S</kbd>
         </button>
         <button className="dock-btn" onClick={handlePaintUnmapped} title="P">
-          <span>🎯 Paint Unmapped</span>
+          <span>Paint Unmapped</span>
           <kbd>P</kbd>
         </button>
         <button className="dock-btn" onClick={handleLockAllCams} title="L">
-          <span>🔒 Lock Cams</span>
+          <span>Lock Cams</span>
           <kbd>L</kbd>
         </button>
         <button className={`dock-btn ${showPip ? 'active' : ''}`} onClick={() => setShowPip((v) => !v)}>
-          <span>📷 PIP ({enabledCams.length})</span>
+          <span>PIP ({enabledCams.length})</span>
         </button>
         <button className="dock-btn" onClick={openQrModal}>
-          <span>📱 Add Phone</span>
+          <span>Add Phone</span>
         </button>
         <button className={`dock-btn ${drawer !== 'closed' ? 'active' : ''}`} onClick={() => setDrawer(drawer === 'closed' ? 'effects' : 'closed')}>
-          <span>⚙ Inspector</span>
+          <span>Inspector</span>
         </button>
       </div>
 
@@ -864,15 +1011,16 @@ export default function App() {
           <div className="qr-modal" onClick={(e) => e.stopPropagation()}>
             <div className="qr-head">
               <div>
-                <strong>Install LEDMap Cam on Any Android Phone</strong>
-                <div className="muted tiny">Point any phone camera at a QR code below → download &amp; open → auto-joins your fleet!</div>
+                <div style={{ marginBottom: 6 }}><DotfunLogo height={18} /></div>
+                <strong>Add an Android Phone to the Fleet</strong>
+                <div className="muted tiny">Point any phone camera at a QR code below, install the APK, and open it—it joins automatically.</div>
               </div>
-              <button className="icon-btn" onClick={() => setQrOpen(false)}>✕</button>
+              <button className="icon-btn" onClick={() => setQrOpen(false)} aria-label="Close">✕</button>
             </div>
             <div className="qr-grid">
               {installUrls.length === 0 ? (
                 <div className="qr-card" style={{ gridColumn: '1 / -1' }}>
-                  <div className="muted">{qrLoading ? 'Loading QR codes...' : 'Could not reach backend.'}</div>
+                  <div className="muted">{qrLoading ? 'Loading QR codes...' : 'Studio host did not respond yet.'}</div>
                   <button className="mini-btn primary" onClick={loadInstallUrls}>Retry</button>
                 </div>
               ) : (
@@ -900,7 +1048,7 @@ export default function App() {
             <input
               ref={cmdInputRef}
               className="cmd-input"
-              placeholder="Type a command, effect, or WLED controller to blink..."
+              placeholder="Jump to a field action, 3D shader, or WLED controller..."
               value={cmdQuery}
               onChange={(e) => setCmdQuery(e.target.value)}
             />
@@ -921,7 +1069,7 @@ export default function App() {
                   {c.hint && <kbd>{c.hint}</kbd>}
                 </button>
               ))}
-              {filteredCmds.length === 0 && <div className="muted" style={{ padding: 14 }}>No matching commands</div>}
+              {filteredCmds.length === 0 && <div className="muted" style={{ padding: 14 }}>Nothing matched that.</div>}
             </div>
           </div>
         </div>

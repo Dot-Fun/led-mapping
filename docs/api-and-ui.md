@@ -133,13 +133,14 @@ Registered automatically under effect ID `custom:<file_stem>`.
 Source: `web/src/App.tsx`, `web/src/components/Viewport3D.tsx`, `web/src/styles.css`, `web/vite.config.ts`.
 
 ### Full-Bleed Stage (`Viewport3D.tsx`)
-- Full-viewport Three.js scene (`OrbitControls` with damping, `GridHelper` at `y=-1.2`, `AxesHelper`, `ResizeObserver`).
-- Mapped LEDs (`source !== 'unmapped'`) render as `THREE.Points` (`PointsMaterial`, `size: 0.07`, vertex colors). Solved camera poses render as amber `ArrowHelper` + sphere markers when `showCameras` is enabled.
-- Clicking a point raycasts (`threshold: 0.08`), opens the floating LED inspector card, and calls `POST /api/map/blink-led` (`duration_ms: 900`).
-- Color modes: `live` (WS `live_rgb` with dark floor `>= (0.08, 0.09, 0.12)`), `coverage` (green `measured`, blue `interpolated`), `controller` (9-color controller palette). Selected LED highlights white.
+- Full-viewport Three.js scene on warm dotfun obsidian (`#0d0b0a`, `OrbitControls` with damping, warm `GridHelper` at `y=-1.2`, `AxesHelper`, `ResizeObserver`).
+- Mapped LEDs (`source !== 'unmapped'`) render as luminous radial-glow `THREE.Points` sprites (`CanvasTexture`, `AdditiveBlending`, `size: 0.135`, vertex colors). Solved camera poses render as dotfun vermilion `#ff3c00` `ArrowHelper` + gold `#e9cf77` origin spheres when `showCameras` is enabled.
+- Clicking a point raycasts (`threshold: 0.08`), attaches a pulsing vermilion selection halo ring, opens the floating LED inspector card, plays a subtle muteable Web Audio ping (`web/src/utils/sound.ts`), and calls `POST /api/map/blink-led` (`duration_ms: 900`).
+- Color modes: `live` (WS `live_rgb` with warm ember floor `>= (0.14, 0.11, 0.09)`), `coverage` (green `measured`, gold `interpolated`), `controller` (9-color warm-forward controller palette). Selected LED highlights warm cream `#fffbed`.
 
-### HUD, Drawer & Live PIP Layout (`App.tsx`, `styles.css`)
-- **Top Bento HUD (`.hud-top`):** Brand + live DDP orb, 4 KPI chips (WLED Fleet, Camera Fleet, 3D Coverage bar, Precision / zone count), `⌘K` Command trigger.
+### HUD, Drawer & Live PIP Layout (`App.tsx`, `styles.css`, `DotfunLogo.tsx`)
+- **Brand System:** Bundled `Plus Jakarta Sans` (`web/public/fonts/plus-jakarta-sans-latin.woff2`), official inline `dotfun` SVG wordmark (`DotfunLogo.tsx`), warm obsidian surfaces (`#0d0b0a` / `#151211`), dotfun vermilion `#ff3c00`, gold `#e9cf77`, and cream `#fffbed`, with `@media (prefers-reduced-motion: reduce)` support.
+- **Top Bento HUD (`.hud-top`):** `dotfun` wordmark + live breathing DDP orb (5-click motto/spark Easter egg), 4 KPI chips (WLED Fleet, Camera Fleet, 3D Coverage bar with scan-complete spark celebration, Precision / zone count), muteable tactile sound toggle (`♪`), and `⌘K` Command trigger.
 - **Right Slide-Over Drawer (`.hud-drawer`, 356px):** 4 tabs (`effects`, `scan`, `cameras`, `controllers`) plus `closed`. Polls REST endpoints every 5s alongside live `/ws` updates.
 - **Bottom Floating Dock (`.floating-dock`):** Play/Stop DDP, Scan Round, Paint Unmapped, Lock Cams, PIP toggle, Add Phone QR, Inspector toggle.
 - **Live Camera PIP Tray (`.pip-tray`):** Collapsible bottom-left strip streaming `/api/cameras/{id}/preview`. Both `.pip-tile img` and `.drawer-preview` enforce **`object-fit: contain`** on `#020617` so portrait phone streams never crop or distort.

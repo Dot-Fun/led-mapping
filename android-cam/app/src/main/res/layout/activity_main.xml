@@ -2,7 +2,7 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0A0D12">
+    android:background="#100F0F">
 
     <TextureView
         android:id="@+id/texturePreview"
@@ -14,27 +14,52 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
-        android:background="#BB0A0D12"
+        android:background="#CC100F0F"
         android:orientation="vertical"
         android:padding="14dp">
 
-        <TextView
-            android:id="@+id/txtTitle"
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="LEDMap Cam"
-            android:textColor="#F8FAFC"
-            android:textSize="19sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="dot"
+                android:textColor="#FFFBED"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="fun"
+                android:textColor="#FF3C00"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/txtTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="LEDMAP CAM"
+                android:textColor="#E9CF77"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.12" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/txtEndpoint"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
+            android:layout_marginTop="4dp"
             android:fontFamily="monospace"
             android:text="Starting HTTP server..."
-            android:textColor="#38BDF8"
+            android:textColor="#E9CF77"
             android:textSize="12sp" />
 
         <TextView
@@ -44,7 +69,7 @@
             android:layout_marginTop="3dp"
             android:fontFamily="monospace"
             android:text="Camera initializing..."
-            android:textColor="#94A3B8"
+            android:textColor="#A69C95"
             android:textSize="11sp" />
 
         <TextView
@@ -53,7 +78,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:fontFamily="monospace"
-            android:text="Host: waiting for Studio connection..."
+            android:text="Studio: waiting for link..."
             android:textColor="#4ADE80"
             android:textSize="12sp" />
     </LinearLayout>
@@ -62,11 +87,11 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="#DD0A0D12"
+        android:background="#E0100F0F"
         android:orientation="vertical"
         android:padding="10dp">
 
-        <!-- Field Remote Controls: trigger scans & heatmap from ANY phone! -->
+        <!-- Field Remote Controls: trigger scans & heatmap from ANY phone -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -78,9 +103,9 @@
                 android:layout_width="0dp"
                 android:layout_height="52dp"
                 android:layout_weight="1.5"
-                android:backgroundTint="#0284C7"
+                android:backgroundTint="#FF3C00"
                 android:text="⚡ SCAN ROUND"
-                android:textColor="#FFFFFF"
+                android:textColor="#FFFBED"
                 android:textStyle="bold" />
 
             <Button
@@ -89,7 +114,9 @@
                 android:layout_height="52dp"
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
-                android:text="🎯 MAP" />
+                android:backgroundTint="#26211E"
+                android:text="🎯 MAP"
+                android:textColor="#FFFBED" />
 
             <Button
                 android:id="@+id/btnUndo"
@@ -97,7 +124,9 @@
                 android:layout_height="52dp"
                 android:layout_marginStart="6dp"
                 android:layout_weight="0.85"
-                android:text="↩" />
+                android:backgroundTint="#26211E"
+                android:text="↩"
+                android:textColor="#FFFBED" />
 
             <Button
                 android:id="@+id/btnFx"
@@ -105,10 +134,12 @@
                 android:layout_height="52dp"
                 android:layout_marginStart="6dp"
                 android:layout_weight="0.9"
-                android:text="▶ FX" />
+                android:backgroundTint="#26211E"
+                android:text="▶ FX"
+                android:textColor="#E9CF77" />
         </LinearLayout>
 
-        <!-- Camera Exposure / Dim Controls -->
+        <!-- Camera Exposure / Dim / Wi-Fi Update Controls -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -121,7 +152,9 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
-                android:text="LED Lock" />
+                android:backgroundTint="#1E1A18"
+                android:text="LED Lock"
+                android:textColor="#DFD6CC" />
 
             <Button
                 android:id="@+id/btnAuto"
@@ -129,7 +162,9 @@
                 android:layout_height="42dp"
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
-                android:text="Auto AE" />
+                android:backgroundTint="#1E1A18"
+                android:text="Auto AE"
+                android:textColor="#DFD6CC" />
 
             <Button
                 android:id="@+id/btnDim"
@@ -137,7 +172,9 @@
                 android:layout_height="42dp"
                 android:layout_marginStart="6dp"
                 android:layout_weight="0.8"
-                android:text="Dim" />
+                android:backgroundTint="#1E1A18"
+                android:text="Dim"
+                android:textColor="#DFD6CC" />
 
             <Button
                 android:id="@+id/btnUpdate"
@@ -145,7 +182,9 @@
                 android:layout_height="42dp"
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
-                android:text="⬆ Update" />
+                android:backgroundTint="#1E1A18"
+                android:text="⬆ Update"
+                android:textColor="#E9CF77" />
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>
